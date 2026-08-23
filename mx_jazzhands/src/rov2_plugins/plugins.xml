@@ -1,0 +1,20 @@
+<library path="rov2_plugins">
+  <class
+    name="rov2_plugins::MockSensor"
+    type="rov2_plugins::MockSensor"
+    base_class_type="rov2_core::SensorPlugin">
+    <description>Mock sensor plugin that emits a synthetic incrementing reading each tick.</description>
+  </class>
+  <class
+    name="rov2_plugins::MockActuator"
+    type="rov2_plugins::MockActuator"
+    base_class_type="rov2_core::ActuatorPlugin">
+    <description>Mock actuator plugin that records the last commanded Twist.</description>
+  </class>
+  <class
+    name="rov2_plugins::NoopBrain"
+    type="rov2_plugins::NoopBrain"
+    base_class_type="rov2_core::BrainPlugin">
+    <description>No-op brain plugin. The framework is a nervous system, not a brain.</description>
+  </class>
+</library>
