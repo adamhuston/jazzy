@@ -1,0 +1,11 @@
+# Request a framework mode transition.
+
+uint8 STANDBY=0
+uint8 ACTIVE=1
+uint8 SAFE=2
+
+uint8 mode
+string reason
+---
+bool success
+string message
