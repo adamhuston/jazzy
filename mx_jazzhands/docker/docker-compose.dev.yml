@@ -1,0 +1,22 @@
+# Dev container for the ROV2 framework.
+# Usage (from mx_jazzhands/):
+#   docker compose -f docker/docker-compose.dev.yml up -d
+#   docker exec -it jazzy-dev bash
+services:
+  jazzy-dev:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dev
+    image: rov2/jazzy-dev
+    container_name: jazzy-dev
+    # host networking eases DDS discovery with a remote Isaac Sim on the LAN.
+    network_mode: host
+    environment:
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
+      - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+    volumes:
+      - ..:/workspace/jazzy/mx_jazzhands
+    working_dir: /workspace/jazzy/mx_jazzhands
+    stdin_open: true
+    tty: true
+    command: bash

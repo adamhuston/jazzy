@@ -1,0 +1,10 @@
+# Simulation profile: remote Isaac Sim over networked ROS 2.
+# Requires matching ROS_DOMAIN_ID and RMW (rmw_fastrtps_cpp) on both machines.
+rov2_core:
+  ros__parameters:
+    loop_rate_hz: 10.0
+    autostart: true
+    use_sim_time: true
+    sensor_plugins: ["rov2_plugins::MockSensor"]
+    actuator_plugins: ["rov2_plugins::MockActuator"]
+    brain_plugins: ["rov2_plugins::NoopBrain"]

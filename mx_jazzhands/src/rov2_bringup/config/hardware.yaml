@@ -1,0 +1,11 @@
+# Hardware profile: Raspberry Pi 3 B+ deployment target.
+# Uses mock plugins initially; swap these for real ros2_control-compatible
+# adapters as hardware drivers land (see skills/ros2-control-integration.md).
+rov2_core:
+  ros__parameters:
+    loop_rate_hz: 20.0
+    autostart: true
+    use_sim_time: false
+    sensor_plugins: ["rov2_plugins::MockSensor"]
+    actuator_plugins: ["rov2_plugins::MockActuator"]
+    brain_plugins: ["rov2_plugins::NoopBrain"]

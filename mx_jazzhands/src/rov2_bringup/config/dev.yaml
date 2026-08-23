@@ -1,0 +1,9 @@
+# Development profile: x86_64 Ubuntu 24.04 Jazzy dev container with mock plugins.
+rov2_core:
+  ros__parameters:
+    loop_rate_hz: 10.0
+    autostart: true
+    use_sim_time: false
+    sensor_plugins: ["rov2_plugins::MockSensor"]
+    actuator_plugins: ["rov2_plugins::MockActuator"]
+    brain_plugins: ["rov2_plugins::NoopBrain"]
