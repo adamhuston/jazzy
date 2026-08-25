@@ -1,4 +1,6 @@
 # Development image for the ROV2 framework: ROS 2 Jazzy on Ubuntu 24.04 (x86_64).
+# LEGACY: the supported workflow is now native WSL (see user_notes.md); this
+# image is kept only as an optional fallback.
 FROM ros:jazzy-ros-base
 
 ARG WORKSPACE=/workspace/jazzy/mx_jazzhands

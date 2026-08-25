@@ -4,6 +4,8 @@
 set -euo pipefail
 
 WS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# ROS setup.bash references unbound vars; relax nounset only while sourcing.
+set +u
 source "/opt/ros/${ROS_DISTRO:-jazzy}/setup.bash"
 
 if [ ! -f "$WS/install/setup.bash" ]; then
@@ -11,6 +13,7 @@ if [ ! -f "$WS/install/setup.bash" ]; then
   exit 1
 fi
 source "$WS/install/setup.bash"
+set -u
 
 PROFILE="${1:-dev}"
 exec ros2 launch rov2_bringup rov2.launch.py profile:="$PROFILE"

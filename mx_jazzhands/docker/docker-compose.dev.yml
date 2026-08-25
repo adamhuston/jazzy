@@ -1,4 +1,6 @@
 # Dev container for the ROV2 framework.
+# LEGACY: the supported workflow is now native WSL (see user_notes.md); this
+# Docker setup is kept only as an optional fallback.
 # Usage (from mx_jazzhands/):
 #   docker compose -f docker/docker-compose.dev.yml up -d
 #   docker exec -it jazzy-dev bash

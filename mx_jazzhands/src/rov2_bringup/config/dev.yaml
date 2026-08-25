@@ -1,4 +1,4 @@
-# Development profile: x86_64 Ubuntu 24.04 Jazzy dev container with mock plugins.
+# Development profile: x86_64 Ubuntu 24.04 Jazzy (WSL) with mock plugins.
 rov2_core:
   ros__parameters:
     loop_rate_hz: 10.0

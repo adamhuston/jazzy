@@ -1,2 +1,2 @@
-# Keep shell scripts LF so they run inside the Linux container regardless of host.
+# Keep shell scripts LF so they run under Linux/WSL regardless of host.
 *.sh text eol=lf

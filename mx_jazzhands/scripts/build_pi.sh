@@ -2,7 +2,7 @@
 # Build the ROV2 workspace for the Raspberry Pi 3 B+ (armv7 / 32-bit) target.
 #
 # Portability is INTENTIONAL, not automatic: this is a separate build path from
-# the x86_64 dev container. Two supported approaches:
+# the x86_64 WSL/Ubuntu dev environment. Two supported approaches:
 #
 #   1) Native build ON the Pi (simplest; slow):
 #        - Install ROS 2 Jazzy (or a compatible build) on Raspberry Pi OS.
@@ -18,7 +18,10 @@
 set -euo pipefail
 
 WS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# ROS setup.bash references unbound vars; relax nounset only while sourcing it.
+set +u
 source "/opt/ros/${ROS_DISTRO:-jazzy}/setup.bash"
+set -u
 cd "$WS"
 
 colcon build --symlink-install \

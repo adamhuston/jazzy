@@ -1,22 +1,46 @@
-## Powershell
+## WSL (PowerShell → Ubuntu 24.04 / ROS 2 Jazzy)
 
-Enter the jazzy environment:
+We run the framework natively in WSL (Ubuntu 24.04, ROS 2 Jazzy). No Docker.
 
-(prereq: the environment is running in docker and you don't want to use the docker terminal)
+Enter WSL from PowerShell:
 
-`docker exec -it jazzy-dev bash`
+`wsl`                          # default distro
+`wsl -d Ubuntu-24.04`          # a specific distro
 
+Enter and load ROS 2 (underlay only):
 
-Enter and loads ROS2:
+`wsl bash -lc "source /opt/ros/jazzy/setup.bash && exec bash"`
 
-`docker exec -it jazzy-dev bash -c "source /opt/ros/jazzy/setup.bash && exec bash"`
+Enter and load ROS 2 + our overlay:
 
+`wsl bash -lc "source /opt/ros/jazzy/setup.bash && source /mnt/c/projects/jazzy/mx_jazzhands/install/setup.bash 2>/dev/null; exec bash"`
+
+Typical sim session (inside WSL):
+
+```
+cd /mnt/c/projects/jazzy/mx_jazzhands
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+export ROS_DOMAIN_ID=0
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+export FASTRTPS_DEFAULT_PROFILES_FILE=/mnt/c/projects/isaacsim/config/fastdds_loopback_peer.xml
+ros2 launch rov2_bringup rov2.launch.py profile:=sim
+```
+
+The `sim` profile now sets `use_sim_time: true` on its own, so `profile:=sim` is
+enough. Override explicitly with `use_sim_time:=true` only when using a different
+profile against a simulator.
 
 Activate alive loop:
 `ros2 run rov2_core rov2_core_node`
 
+NOTE (paths): `/mnt/c/projects/jazzy/mx_jazzhands` is the Windows repo seen from
+WSL — convenient for editing on Windows, but colcon builds are noticeably faster
+from a native clone under the WSL filesystem (e.g. `~/jazzy/mx_jazzhands`). Pick
+one and stay consistent so the overlay you source matches what you built.
 
-## Sourcing (inside the container)
+
+## Sourcing (inside WSL)
 
 Two layers must be sourced. Every NEW shell needs the underlay; any shell that
 uses our custom messages/plugins also needs the overlay.
@@ -24,17 +48,21 @@ uses our custom messages/plugins also needs the overlay.
 - Underlay (base ROS 2 — gives you `ros2`, `colcon`):
   `source /opt/ros/jazzy/setup.bash`
 - Overlay (our built workspace — gives you `rov2_*` types/plugins):
-  `source /workspace/jazzy/mx_jazzhands/install/setup.bash`
+  `source /mnt/c/projects/jazzy/mx_jazzhands/install/setup.bash`
 
 GOTCHA: `The message/service type 'rov2_interfaces/...' is invalid` in a
 `ros2 topic echo` / `service call` shell means the OVERLAY isn't sourced in
 THAT shell. The running node is fine; the CLI is a separate process.
 
-Optional convenience — auto-source both on entry:
-`docker exec -it jazzy-dev bash -c "source /opt/ros/jazzy/setup.bash && source /workspace/jazzy/mx_jazzhands/install/setup.bash 2>/dev/null; exec bash"`
+Optional convenience — auto-source both in every WSL shell (append to `~/.bashrc`):
+```
+source /opt/ros/jazzy/setup.bash
+[ -f /mnt/c/projects/jazzy/mx_jazzhands/install/setup.bash ] && \
+  source /mnt/c/projects/jazzy/mx_jazzhands/install/setup.bash
+```
 
 
-## Build (inside the container, from mx_jazzhands/)
+## Build (inside WSL, from mx_jazzhands/)
 
 - Build everything:
   `colcon build`
@@ -44,6 +72,13 @@ Optional convenience — auto-source both on entry:
   `source install/setup.bash`
 - Clean rebuild (when CMake/interfaces act stale):
   `rm -rf build install log && colcon build`
+
+Helper scripts (from the repo root, inside WSL):
+- Build: `scripts/build_dev.sh`
+- Launch a profile: `scripts/run_dev.sh sim`   (or `dev` / `hardware`)
+
+If a fresh clone drops the executable bit, either run `chmod +x scripts/*.sh`
+once, or invoke with `bash scripts/build_dev.sh`.
 
 
 ## Run
@@ -75,7 +110,7 @@ Optional convenience — auto-source both on entry:
 ## Git (PowerShell, from C:\projects\jazzy)
 
 - Clone:  `git clone https://github.com/adamhuston/jazzy.git`
-- Pull latest (run inside the container before building):  `git pull`
+- Pull latest (run before building):  `git pull`
 - Typical commit + push:
   ```
   git add -A
@@ -84,16 +119,19 @@ Optional convenience — auto-source both on entry:
   ```
 
 
-## Docker (PowerShell)
+## WSL management (PowerShell)
 
-- List running containers:  `docker ps`
-- Enter the container:       `docker exec -it jazzy-dev bash`
-- Start it if stopped:       `docker start jazzy-dev`
+- List distros:            `wsl -l -v`
+- Enter default distro:    `wsl`
+- Enter a specific distro: `wsl -d Ubuntu-24.04`
+- Shut WSL down:           `wsl --shutdown`
 
 
 ## Reference
 
-- Container name: `jazzy-dev`  (image `ros:jazzy`)
-- Repo path in container: `/workspace/jazzy/mx_jazzhands`
+- Runtime: WSL 2, Ubuntu 24.04, ROS 2 Jazzy (native — no Docker).
+- Repo path in WSL: `/mnt/c/projects/jazzy/mx_jazzhands` (or a native `~/jazzy/mx_jazzhands` clone).
 - ROS distro: Jazzy | RMW: rmw_fastrtps_cpp (Fast DDS)
 - For remote Isaac Sim interop: matching `ROS_DOMAIN_ID` + same RMW on both machines.
+- Legacy: a Docker dev setup still lives under `docker/` but is no longer the
+  supported workflow.
