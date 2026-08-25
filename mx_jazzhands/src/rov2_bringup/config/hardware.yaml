@@ -4,6 +4,7 @@
 rov2_core:
   ros__parameters:
     loop_rate_hz: 20.0
+    cmd_vel_timeout_sec: 0.5
     autostart: true
     use_sim_time: false
     sensor_plugins: ["rov2_plugins::MockSensor"]

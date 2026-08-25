@@ -13,12 +13,12 @@ Enter and load ROS 2 (underlay only):
 
 Enter and load ROS 2 + our overlay:
 
-`wsl bash -lc "source /opt/ros/jazzy/setup.bash && source /mnt/c/projects/jazzy/mx_jazzhands/install/setup.bash 2>/dev/null; exec bash"`
+`wsl bash -lc "source /opt/ros/jazzy/setup.bash && source ~/jazzy/mx_jazzhands/install/setup.bash 2>/dev/null; exec bash"`
 
 Typical sim session (inside WSL):
 
 ```
-cd /mnt/c/projects/jazzy/mx_jazzhands
+cd ~/jazzy/mx_jazzhands
 source /opt/ros/jazzy/setup.bash
 source install/setup.bash
 export ROS_DOMAIN_ID=0
@@ -34,10 +34,12 @@ profile against a simulator.
 Activate alive loop:
 `ros2 run rov2_core rov2_core_node`
 
-NOTE (paths): `/mnt/c/projects/jazzy/mx_jazzhands` is the Windows repo seen from
-WSL — convenient for editing on Windows, but colcon builds are noticeably faster
-from a native clone under the WSL filesystem (e.g. `~/jazzy/mx_jazzhands`). Pick
-one and stay consistent so the overlay you source matches what you built.
+NOTE (paths): the repo is cloned natively in WSL at `~/jazzy/mx_jazzhands` (fast
+colcon builds). The same files are reachable from Windows as `C:\projects\jazzy`
+and from WSL as `/mnt/c/projects/jazzy/mx_jazzhands`, but building on `/mnt/c` is
+noticeably slower — prefer the `~/jazzy` clone and stay consistent so the overlay
+you source matches what you built. `FASTRTPS_DEFAULT_PROFILES_FILE` still points
+at the Windows-side `/mnt/c/projects/isaacsim/...` file.
 
 
 ## Sourcing (inside WSL)
@@ -48,17 +50,21 @@ uses our custom messages/plugins also needs the overlay.
 - Underlay (base ROS 2 — gives you `ros2`, `colcon`):
   `source /opt/ros/jazzy/setup.bash`
 - Overlay (our built workspace — gives you `rov2_*` types/plugins):
-  `source /mnt/c/projects/jazzy/mx_jazzhands/install/setup.bash`
+  `source ~/jazzy/mx_jazzhands/install/setup.bash`
 
 GOTCHA: `The message/service type 'rov2_interfaces/...' is invalid` in a
 `ros2 topic echo` / `service call` shell means the OVERLAY isn't sourced in
 THAT shell. The running node is fine; the CLI is a separate process.
 
+GOTCHA: `ros2: command not found` means the UNDERLAY isn't sourced in that shell
+— sourcing only `install/setup.bash` (overlay) is not enough. Source
+`/opt/ros/jazzy/setup.bash` first.
+
 Optional convenience — auto-source both in every WSL shell (append to `~/.bashrc`):
 ```
 source /opt/ros/jazzy/setup.bash
-[ -f /mnt/c/projects/jazzy/mx_jazzhands/install/setup.bash ] && \
-  source /mnt/c/projects/jazzy/mx_jazzhands/install/setup.bash
+[ -f ~/jazzy/mx_jazzhands/install/setup.bash ] && \
+  source ~/jazzy/mx_jazzhands/install/setup.bash
 ```
 
 
@@ -130,7 +136,7 @@ once, or invoke with `bash scripts/build_dev.sh`.
 ## Reference
 
 - Runtime: WSL 2, Ubuntu 24.04, ROS 2 Jazzy (native — no Docker).
-- Repo path in WSL: `/mnt/c/projects/jazzy/mx_jazzhands` (or a native `~/jazzy/mx_jazzhands` clone).
+- Repo path in WSL: `~/jazzy/mx_jazzhands` (native clone; also reachable as `/mnt/c/projects/jazzy/mx_jazzhands`, but slower to build).
 - ROS distro: Jazzy | RMW: rmw_fastrtps_cpp (Fast DDS)
 - For remote Isaac Sim interop: matching `ROS_DOMAIN_ID` + same RMW on both machines.
 - Legacy: a Docker dev setup still lives under `docker/` but is no longer the

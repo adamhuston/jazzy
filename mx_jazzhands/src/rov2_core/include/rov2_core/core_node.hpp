@@ -91,6 +91,12 @@ private:
 
   uint8_t mode_ {rov2_interfaces::msg::ModeCommand::STANDBY};
   geometry_msgs::msg::Twist last_cmd_;
+
+  // cmd_vel watchdog: motion is zeroed if no command arrives within this
+  // window, so a dropped link or dead brain cannot leave real motors driving.
+  double cmd_vel_timeout_sec_ {0.5};
+  rclcpp::Time last_cmd_time_;
+  bool have_cmd_ {false};
 };
 
 }  // namespace rov2_core

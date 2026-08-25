@@ -1,15 +1,22 @@
 """sim_pilot: a canned velocity source for Milestone 2 sim validation.
 
-Publishes a repeating forward -> arc -> stop pattern of geometry_msgs/Twist on
-the framework's command-contract topic (default /rov2_core/cmd_vel). Both peers
-subscribe to that topic: the framework routes it to MockActuator (proof of
-receipt via /rov2_core/status) and the Isaac Sim rover uses it to move. This
-substitutes for a real brain so the command-and-state loop can be exercised.
+Publishes a repeating pattern of geometry_msgs/Twist on the framework's
+command-contract topic (default /rov2_core/cmd_vel). Two patterns are available
+(select with the `pattern` param):
+  - forward_arc_stop: forward -> arc -> stop (the original hello-world).
+  - figure8: two opposite full-circle lobes that each ideally return to the
+    start pose, tracing a figure-8 that crosses at the start point.
+Both peers subscribe to that topic: the framework routes it to MockActuator
+(proof of receipt via /rov2_core/status) and the Isaac Sim rover uses it to
+move. This substitutes for a real brain so the command-and-state loop can be
+exercised.
 
 Sim-only tooling: this package is never included in the hardware build path.
 With use_sim_time:=true the publish cadence follows /clock, so it only ticks
 once the sim is publishing the clock.
 """
+
+import math
 
 import rclpy
 from geometry_msgs.msg import Twist
@@ -38,6 +45,7 @@ class SimPilot(Node):
 
         self.declare_parameter("cmd_vel_topic", "/rov2_core/cmd_vel")
         self.declare_parameter("publish_rate_hz", 10.0)
+        self.declare_parameter("pattern", "forward_arc_stop")
         self.declare_parameter("linear_speed", 0.3)
         self.declare_parameter("angular_speed", 0.5)
         self.declare_parameter("forward_sec", 3.0)
@@ -47,6 +55,7 @@ class SimPilot(Node):
 
         topic = self.get_parameter("cmd_vel_topic").value
         rate = self.get_parameter("publish_rate_hz").value
+        pattern = self.get_parameter("pattern").value
         lin = self.get_parameter("linear_speed").value
         ang = self.get_parameter("angular_speed").value
         forward_sec = self.get_parameter("forward_sec").value
@@ -59,12 +68,9 @@ class SimPilot(Node):
             rate = 10.0
         self._dt = 1.0 / rate
 
-        # Phase table: (name, linear.x, angular.z, duration_sec).
-        self._phases = [
-            ("forward", lin, 0.0, forward_sec),
-            ("arc", lin, ang, arc_sec),
-            ("stop", 0.0, 0.0, stop_sec),
-        ]
+        self._phases = self._build_phases(
+            pattern, lin, ang, forward_sec, arc_sec, stop_sec
+        )
         self._phase_idx = 0
         self._elapsed = 0.0
         self._done = False
@@ -73,9 +79,33 @@ class SimPilot(Node):
         self._timer = self.create_timer(self._dt, self._tick)
 
         self.get_logger().info(
-            f"sim_pilot publishing to {topic} at {rate:.1f} Hz (loop={self._loop})"
+            f"sim_pilot publishing to {topic} at {rate:.1f} Hz "
+            f"(pattern={pattern}, loop={self._loop})"
         )
         self._log_phase()
+
+    def _build_phases(self, pattern, lin, ang, forward_sec, arc_sec, stop_sec):
+        """Build the phase table: list of (name, linear.x, angular.z, dur_sec)."""
+        if pattern == "figure8":
+            # Two opposite full-circle lobes. Each lobe is one full 2*pi
+            # revolution, so it ideally returns to the start pose; the pair
+            # traces a figure-8 crossing at the start point. Open-loop, so real
+            # sim drift accumulates and the return is only approximate.
+            w = abs(ang) if ang != 0.0 else 0.5
+            lobe_sec = 2.0 * math.pi / w
+            return [
+                ("loop_left", lin, w, lobe_sec),
+                ("loop_right", lin, -w, lobe_sec),
+            ]
+        if pattern != "forward_arc_stop":
+            self.get_logger().warn(
+                f"unknown pattern '{pattern}'; using 'forward_arc_stop'"
+            )
+        return [
+            ("forward", lin, 0.0, forward_sec),
+            ("arc", lin, ang, arc_sec),
+            ("stop", 0.0, 0.0, stop_sec),
+        ]
 
     def _log_phase(self):
         name, lin, ang, dur = self._phases[self._phase_idx]

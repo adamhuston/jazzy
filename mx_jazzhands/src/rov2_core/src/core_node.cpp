@@ -24,6 +24,7 @@ CoreNode::CoreNode(const rclcpp::NodeOptions & options)
 : rclcpp_lifecycle::LifecycleNode("rov2_core", options)
 {
   declare_parameter<double>("loop_rate_hz", 10.0);
+  declare_parameter<double>("cmd_vel_timeout_sec", 0.5);
   declare_parameter<bool>("autostart", true);
   declare_parameter<std::vector<std::string>>("sensor_plugins", std::vector<std::string>{});
   declare_parameter<std::vector<std::string>>("actuator_plugins", std::vector<std::string>{});
@@ -48,7 +49,7 @@ void CoreNode::load_plugins(
     try {
       auto plugin = loader.createSharedInstance(lookup_name);
       plugin->set_plugin_type(lookup_name);
-      if (!plugin->on_init(get_logger(), get_clock(), lookup_name)) {
+      if (!plugin->on_init(shared_from_this(), lookup_name)) {
         RCLCPP_ERROR(get_logger(), "Plugin '%s' failed on_init; skipping", lookup_name.c_str());
         continue;
       }
@@ -76,6 +77,7 @@ CallbackReturn CoreNode::on_configure(const rclcpp_lifecycle::State &)
     return CallbackReturn::FAILURE;
   }
   loop_period_ms_ = 1000.0 / loop_rate_hz_;
+  cmd_vel_timeout_sec_ = get_parameter("cmd_vel_timeout_sec").as_double();
 
   status_pub_ = create_publisher<SystemStatus>("~/status", qos::status());
   diag_pub_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
@@ -113,6 +115,7 @@ CallbackReturn CoreNode::on_activate(const rclcpp_lifecycle::State &)
   mode_ = ModeCommand::ACTIVE;
   loop_count_ = 0;
   have_last_tick_ = false;
+  have_cmd_ = false;
 
   const auto period = std::chrono::duration<double>(1.0 / loop_rate_hz_);
   alive_timer_ = create_wall_timer(
@@ -181,7 +184,16 @@ void CoreNode::alive_loop()
 
   geometry_msgs::msg::Twist outgoing;
   if (mode_ == ModeCommand::ACTIVE) {
-    outgoing = last_cmd_;
+    const bool cmd_fresh = have_cmd_ &&
+      (now - last_cmd_time_).seconds() <= cmd_vel_timeout_sec_;
+    if (cmd_fresh) {
+      outgoing = last_cmd_;
+    } else if (have_cmd_) {
+      // Command went stale: fail safe to zero motion and flag the gap.
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 1000,
+        "cmd_vel stale (> %.3fs); holding zero motion", cmd_vel_timeout_sec_);
+    }
   }  // STANDBY/SAFE hold zero motion.
   for (auto & a : actuators_) {a->apply_command(outgoing);}
 
@@ -283,6 +295,8 @@ void CoreNode::on_mode_command(const ModeCommand::SharedPtr msg)
 void CoreNode::on_cmd_vel(const geometry_msgs::msg::Twist::SharedPtr msg)
 {
   last_cmd_ = *msg;
+  last_cmd_time_ = this->now();
+  have_cmd_ = true;
 }
 
 void CoreNode::on_set_mode(

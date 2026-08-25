@@ -14,7 +14,11 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import (
+    DeclareLaunchArgument,
+    IncludeLaunchDescription,
+    OpaqueFunction,
+)
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
@@ -22,38 +26,45 @@ from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
 
-def generate_launch_description():
-    rov2_launch = os.path.join(
-        get_package_share_directory("rov2_bringup"), "launch", "rov2.launch.py"
-    )
-
-    use_sim_time = LaunchConfiguration("use_sim_time")
-    start_pilot = LaunchConfiguration("start_pilot")
+def _launch_setup(context, *args, **kwargs):
+    bringup_share = get_package_share_directory("rov2_bringup")
+    rov2_launch = os.path.join(bringup_share, "launch", "rov2.launch.py")
+    sim_params = os.path.join(bringup_share, "config", "sim.yaml")
 
     core = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(rov2_launch),
         launch_arguments={"profile": "sim"}.items(),
     )
 
+    # sim.yaml's sim_pilot section is the source of truth; a launch arg overrides
+    # it only when explicitly given (empty means "defer to the yaml").
+    pilot_params = [
+        sim_params,
+        {
+            "use_sim_time": ParameterValue(
+                LaunchConfiguration("use_sim_time"), value_type=bool
+            )
+        },
+    ]
+    overrides = (("pattern", str), ("linear_speed", float), ("angular_speed", float))
+    for name, caster in overrides:
+        if LaunchConfiguration(name).perform(context) != "":
+            pilot_params.append(
+                {name: ParameterValue(LaunchConfiguration(name), value_type=caster)}
+            )
+
     pilot = Node(
         package="rov2_sim",
         executable="sim_pilot",
         name="sim_pilot",
         output="screen",
-        condition=IfCondition(start_pilot),
-        parameters=[
-            {
-                "use_sim_time": ParameterValue(use_sim_time, value_type=bool),
-                "linear_speed": ParameterValue(
-                    LaunchConfiguration("linear_speed"), value_type=float
-                ),
-                "angular_speed": ParameterValue(
-                    LaunchConfiguration("angular_speed"), value_type=float
-                ),
-            }
-        ],
+        condition=IfCondition(LaunchConfiguration("start_pilot")),
+        parameters=pilot_params,
     )
+    return [core, pilot]
 
+
+def generate_launch_description():
     return LaunchDescription(
         [
             DeclareLaunchArgument(
@@ -67,16 +78,23 @@ def generate_launch_description():
                 description="Start the sim_pilot velocity source alongside the core",
             ),
             DeclareLaunchArgument(
+                "pattern",
+                default_value="",
+                description=(
+                    "Override sim.yaml sim_pilot pattern: 'forward_arc_stop' or "
+                    "'figure8' (empty defers to sim.yaml)"
+                ),
+            ),
+            DeclareLaunchArgument(
                 "linear_speed",
-                default_value="0.3",
-                description="sim_pilot forward speed (m/s)",
+                default_value="",
+                description="Override sim.yaml sim_pilot forward speed (m/s)",
             ),
             DeclareLaunchArgument(
                 "angular_speed",
-                default_value="0.5",
-                description="sim_pilot yaw rate during the arc phase (rad/s)",
+                default_value="",
+                description="Override sim.yaml sim_pilot yaw rate (rad/s)",
             ),
-            core,
-            pilot,
+            OpaqueFunction(function=_launch_setup),
         ]
     )

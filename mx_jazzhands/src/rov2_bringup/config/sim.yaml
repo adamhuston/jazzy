@@ -3,8 +3,18 @@
 rov2_core:
   ros__parameters:
     loop_rate_hz: 10.0
+    cmd_vel_timeout_sec: 0.5
     autostart: true
     use_sim_time: true
     sensor_plugins: ["rov2_plugins::MockSensor"]
     actuator_plugins: ["rov2_plugins::MockActuator"]
     brain_plugins: ["rov2_plugins::NoopBrain"]
+
+# sim_pilot canned velocity source (sim-only; package rov2_sim). Selectable
+# hello-world motion: forward_arc_stop (forward -> arc -> stop) or figure8 (two
+# opposite full-circle lobes that ideally return to the start point).
+sim_pilot:
+  ros__parameters:
+    pattern: forward_arc_stop
+    linear_speed: 0.3
+    angular_speed: 0.5

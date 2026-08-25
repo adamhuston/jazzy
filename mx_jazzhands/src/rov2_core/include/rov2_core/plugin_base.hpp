@@ -8,6 +8,7 @@
 
 #include "rclcpp/clock.hpp"
 #include "rclcpp/logger.hpp"
+#include "rclcpp_lifecycle/lifecycle_node.hpp"
 
 #include "rov2_interfaces/msg/plugin_status.hpp"
 
@@ -25,14 +26,21 @@ public:
 
   virtual ~PluginBase() = default;
 
-  // Called once after construction, before any other lifecycle hook.
+  // Called once after construction, before any other lifecycle hook. The host
+  // node is provided (as a weak pointer to avoid an ownership cycle) so plugins
+  // can create their own publishers/subscribers on the framework node; logger
+  // and clock are derived from it.
   virtual bool on_init(
-    const rclcpp::Logger & logger,
-    rclcpp::Clock::SharedPtr clock,
+    const rclcpp_lifecycle::LifecycleNode::WeakPtr & node,
     const std::string & instance_name)
   {
-    logger_ = std::make_shared<rclcpp::Logger>(logger);
-    clock_ = std::move(clock);
+    node_ = node;
+    const auto locked = node_.lock();
+    if (!locked) {
+      return false;
+    }
+    logger_ = std::make_shared<rclcpp::Logger>(locked->get_logger());
+    clock_ = locked->get_clock();
     instance_name_ = instance_name;
     state_ = PluginStatus::UNCONFIGURED;
     return true;
@@ -69,6 +77,11 @@ protected:
     return logger_ ? *logger_ : rclcpp::get_logger("rov2_core.plugin");
   }
 
+  // Host framework node, for plugins that create their own pub/sub. Returns
+  // nullptr if the node has been destroyed; callers must null-check.
+  rclcpp_lifecycle::LifecycleNode::SharedPtr node() const { return node_.lock(); }
+
+  rclcpp_lifecycle::LifecycleNode::WeakPtr node_;
   std::shared_ptr<rclcpp::Logger> logger_;
   rclcpp::Clock::SharedPtr clock_;
   std::string instance_name_;
