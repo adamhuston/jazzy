@@ -12,7 +12,8 @@ Protocol (device -> host frame):
 
     HEAD = 0xFF
     RECV_ID = 0xFB              (device -> host; host -> device uses 0xFC)
-    LEN  = FUNC + all data + CHK counted with the two id bytes -> ndata = LEN - 4
+    LEN  = FUNC + all data + CHK (so data length = LEN - 2, i.e. LEN - 3 after
+           also dropping the leading id byte from our two-byte header sync)
     FUNC = 0x0A (FUNC_REPORT_SPEED) carries: vx,vy,vz (int16 LE, mm/s) + battery
     CHK  = (LEN + FUNC + sum(data)) & 0xFF
 
@@ -34,7 +35,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import struct
 import sys
 import time
 from collections import Counter
@@ -64,8 +64,10 @@ class YahboomError(RuntimeError):
 
 @dataclass
 class Frame:
+    ext_len: int
     func: int
     data: bytes
+    chk: int
     ok: bool  # True when the frame checksum matched
 
 
@@ -138,7 +140,7 @@ class YahboomBattery:
         if len(hdr) < 2:
             return None
         ext_len, func = hdr[0], hdr[1]
-        ndata = ext_len - 4
+        ndata = ext_len - 3  # LEN counts FUNC + data + CHK; strip FUNC, CHK, and the id
         if ndata < 0:
             return None
         data = ser.read(ndata)
@@ -148,7 +150,13 @@ class YahboomBattery:
         if not chk:
             return None
         calc = (ext_len + func + sum(data)) & 0xFF
-        return Frame(func=func, data=bytes(data), ok=(calc == chk[0]))
+        return Frame(
+            ext_len=ext_len,
+            func=func,
+            data=bytes(data),
+            chk=chk[0],
+            ok=(calc == chk[0]),
+        )
 
     def read_voltage(self, timeout: float = 2.0) -> float | None:
         """Return pack voltage in volts, or None if no valid frame arrives in time."""
@@ -170,15 +178,24 @@ class YahboomBattery:
             if not frame:
                 continue
             seen[frame.func] += 1
-            line = f"func=0x{frame.func:02X} ok={frame.ok} data={frame.data.hex(' ')}"
-            if frame.func == FUNC_REPORT_SPEED and len(frame.data) >= 7:
-                vx, vy, vz = struct.unpack("<hhh", frame.data[:6])
-                line += (
-                    f"  | vx={vx} vy={vy} vz={vz}"
-                    f" batt=0x{frame.data[6]:02X} -> {frame.data[6] / 10.0:.1f} V"
-                )
-            print(line)
+            calc = (frame.ext_len + frame.func + sum(frame.data)) & 0xFF
+            print(
+                f"func=0x{frame.func:02X} len={frame.ext_len:2d}"
+                f" data={frame.data.hex(' ')}"
+                f" chk=0x{frame.chk:02X} calc=0x{calc:02X}"
+            )
         print("\nFUNC codes seen:", {f"0x{k:02X}": v for k, v in seen.items()})
+
+    def dump_raw(self, seconds: float = 3.0, chunk: int = 64) -> None:
+        """Print the raw byte stream so framing/checksum can be reverse-engineered."""
+        ser = self._ser
+        if ser is None:
+            raise YahboomError("port is not open")
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            buf = ser.read(chunk)
+            if buf:
+                print(buf.hex(" "))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -188,6 +205,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout", type=float, default=2.0, help="read timeout (s)")
     parser.add_argument("--watch", action="store_true", help="print readings forever")
     parser.add_argument("--debug", action="store_true", help="dump raw frames")
+    parser.add_argument("--raw", action="store_true", help="dump raw byte stream")
     parser.add_argument("--seconds", type=float, default=5.0, help="--debug duration")
     args = parser.parse_args(argv)
 
@@ -199,6 +217,9 @@ def main(argv: list[str] | None = None) -> int:
         with YahboomBattery(args.port, args.baud) as bat:
             bat.enable_auto_report()
             print(f"port: {bat.port} @ {bat.baud} baud", file=sys.stderr)
+            if args.raw:
+                bat.dump_raw(args.seconds)
+                return 0
             if args.debug:
                 bat.dump_frames(args.seconds)
                 return 0
