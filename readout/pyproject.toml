@@ -1,0 +1,23 @@
+[project]
+name = "jazzy-readout"
+version = "0.1.0"
+description = "jazzwatch — a paned terminal dashboard for the mx_jazzhands ROS 2 system"
+requires-python = ">=3.10"
+dependencies = [
+    "textual>=0.60",
+    "pyserial>=3.5",
+]
+
+[project.scripts]
+jazzwatch = "jazzy_readout.__main__:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["jazzy_readout", "jazzy_readout.hardware"]
+
+# rclpy and rov2_interfaces are provided by the sourced ROS 2 overlay, not pip.
+# Create the venv with --system-site-packages so they are importable:
+#   python3 -m venv --system-site-packages .venv

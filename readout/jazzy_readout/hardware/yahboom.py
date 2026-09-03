@@ -112,6 +112,14 @@ class YahboomBattery:
     def __exit__(self, *exc) -> None:
         self.close()
 
+    def flush(self) -> None:
+        """Drop buffered frames so the next read reflects the latest telemetry."""
+        if self._ser is not None:
+            try:
+                self._ser.reset_input_buffer()
+            except Exception:
+                pass
+
     def enable_auto_report(self, forever: bool = False) -> None:
         """Best-effort nudge in case the board is not auto-reporting already."""
         if self._ser is None:
@@ -163,7 +171,7 @@ class YahboomBattery:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             frame = self._read_frame()
-            if frame and frame.func == FUNC_REPORT_SPEED and len(frame.data) >= 7:
+            if frame and frame.ok and frame.func == FUNC_REPORT_SPEED and len(frame.data) >= 7:
                 volts = frame.data[6] / 10.0
                 if SANE_VOLTAGE[0] <= volts <= SANE_VOLTAGE[1]:
                     return volts
