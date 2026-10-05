@@ -17,4 +17,22 @@
     base_class_type="rov2_core::BrainPlugin">
     <description>No-op brain plugin. The framework is a nervous system, not a brain.</description>
   </class>
+  <class
+    name="rov2_plugins::Drivetrain"
+    type="rov2_plugins::Drivetrain"
+    base_class_type="rov2_core::ActuatorPlugin">
+    <description>Four-wheel skid-steer drivetrain. Expands a body Twist into four wheel speeds on the shared Yahboom board.</description>
+  </class>
+  <class
+    name="rov2_plugins::NavImu"
+    type="rov2_plugins::NavImu"
+    base_class_type="rov2_core::SensorPlugin">
+    <description>Publishes the Yahboom onboard 9-axis IMU as sensor_msgs/Imu (navigation source).</description>
+  </class>
+  <class
+    name="rov2_plugins::Battery"
+    type="rov2_plugins::Battery"
+    base_class_type="rov2_core::SensorPlugin">
+    <description>Publishes pack voltage from the shared Yahboom board as sensor_msgs/BatteryState.</description>
+  </class>
 </library>

@@ -8,14 +8,18 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_lifecycle REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
 find_package(rov2_core REQUIRED)
 find_package(rov2_interfaces REQUIRED)
 
 set(dependencies
   pluginlib
   rclcpp
+  rclcpp_lifecycle
   geometry_msgs
+  sensor_msgs
   rov2_core
   rov2_interfaces
 )
@@ -24,6 +28,14 @@ add_library(${PROJECT_NAME} SHARED
   src/mock_sensor.cpp
   src/mock_actuator.cpp
   src/noop_brain.cpp
+  src/yahboom_board.cpp
+  src/drivetrain_plugin.cpp
+  src/nav_imu_plugin.cpp
+  src/battery_plugin.cpp
+)
+target_include_directories(${PROJECT_NAME} PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
 )
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_17)
 ament_target_dependencies(${PROJECT_NAME} ${dependencies})
@@ -43,10 +55,16 @@ install(
   DESTINATION share/${PROJECT_NAME}
 )
 
+install(
+  DIRECTORY include/
+  DESTINATION include
+)
+
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
   ament_lint_auto_find_test_dependencies()
 endif()
 
+ament_export_include_directories(include)
 ament_export_dependencies(${dependencies})
 ament_package()
