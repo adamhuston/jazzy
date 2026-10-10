@@ -1,8 +1,10 @@
 #ifndef ROV2_CORE__CORE_NODE_HPP_
 #define ROV2_CORE__CORE_NODE_HPP_
 
+#include <chrono>
 #include <memory>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "rclcpp/rclcpp.hpp"
@@ -51,12 +53,19 @@ private:
     std::shared_ptr<rov2_interfaces::srv::SetMode::Response> response);
 
   // Loads the plugin names listed in `param_name` using `loader`, running the
-  // init/configure hooks. Missing optional plugins are non-fatal.
+  // init/configure hooks. A plugin whose lookup name is in `required_plugins_`
+  // is fail-closed: if it cannot load/configure, `required_load_ok_` is cleared
+  // and on_configure fails. Other (optional) plugins remain non-fatal.
   template<typename PluginT>
   void load_plugins(
     const std::string & param_name,
     pluginlib::ClassLoader<PluginT> & loader,
     std::vector<std::shared_ptr<PluginT>> & out);
+
+  bool is_required(const std::string & lookup_name) const
+  {
+    return required_plugins_.find(lookup_name) != required_plugins_.end();
+  }
 
   bool apply_mode(uint8_t mode, const std::string & reason, std::string & message);
   rov2_interfaces::msg::SystemStatus build_status();
@@ -94,9 +103,18 @@ private:
 
   // cmd_vel watchdog: motion is zeroed if no command arrives within this
   // window, so a dropped link or dead brain cannot leave real motors driving.
+  // The decision uses a MONOTONIC clock (steady_clock), not ROS time, so a sim
+  // clock or wall-clock jump can never extend a stale command's validity.
   double cmd_vel_timeout_sec_ {0.5};
   rclcpp::Time last_cmd_time_;
+  std::chrono::steady_clock::time_point last_cmd_steady_;
   bool have_cmd_ {false};
+
+  // Fail-closed plugin policy. Lookup names listed here MUST load, configure,
+  // and activate; otherwise the lifecycle transition fails instead of silently
+  // running without a safety-relevant plugin.
+  std::unordered_set<std::string> required_plugins_;
+  bool required_load_ok_ {true};
 };
 
 }  // namespace rov2_core

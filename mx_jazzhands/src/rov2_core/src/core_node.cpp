@@ -29,6 +29,9 @@ CoreNode::CoreNode(const rclcpp::NodeOptions & options)
   declare_parameter<std::vector<std::string>>("sensor_plugins", std::vector<std::string>{});
   declare_parameter<std::vector<std::string>>("actuator_plugins", std::vector<std::string>{});
   declare_parameter<std::vector<std::string>>("brain_plugins", std::vector<std::string>{});
+  // Lookup names that MUST load, configure, and activate (fail-closed). Any
+  // listed plugin that fails fails the whole lifecycle transition.
+  declare_parameter<std::vector<std::string>>("required_plugins", std::vector<std::string>{});
 
   sensor_loader_ = std::make_unique<pluginlib::ClassLoader<SensorPlugin>>(
     "rov2_core", "rov2_core::SensorPlugin");
@@ -46,25 +49,29 @@ void CoreNode::load_plugins(
 {
   const auto names = get_parameter(param_name).as_string_array();
   for (const auto & lookup_name : names) {
+    const bool required = is_required(lookup_name);
     try {
       auto plugin = loader.createSharedInstance(lookup_name);
       plugin->set_plugin_type(lookup_name);
       if (!plugin->on_init(shared_from_this(), lookup_name)) {
         RCLCPP_ERROR(get_logger(), "Plugin '%s' failed on_init; skipping", lookup_name.c_str());
+        if (required) {required_load_ok_ = false;}
         continue;
       }
       if (!plugin->on_configure()) {
         RCLCPP_ERROR(
           get_logger(), "Plugin '%s' failed on_configure; skipping", lookup_name.c_str());
+        if (required) {required_load_ok_ = false;}
         continue;
       }
       out.push_back(plugin);
       RCLCPP_INFO(get_logger(), "Loaded %s plugin '%s'", param_name.c_str(), lookup_name.c_str());
     } catch (const pluginlib::PluginlibException & ex) {
-      // Missing/optional plugins are non-fatal: log actionable detail and continue.
+      // Optional plugins are non-fatal; a REQUIRED plugin failing is fail-closed.
       RCLCPP_ERROR(
         get_logger(), "Failed to load plugin '%s' (%s): %s",
         lookup_name.c_str(), param_name.c_str(), ex.what());
+      if (required) {required_load_ok_ = false;}
     }
   }
 }
@@ -78,6 +85,10 @@ CallbackReturn CoreNode::on_configure(const rclcpp_lifecycle::State &)
   }
   loop_period_ms_ = 1000.0 / loop_rate_hz_;
   cmd_vel_timeout_sec_ = get_parameter("cmd_vel_timeout_sec").as_double();
+
+  const auto required = get_parameter("required_plugins").as_string_array();
+  required_plugins_ = std::unordered_set<std::string>(required.begin(), required.end());
+  required_load_ok_ = true;
 
   status_pub_ = create_publisher<SystemStatus>("~/status", qos::status());
   diag_pub_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
@@ -97,6 +108,14 @@ CallbackReturn CoreNode::on_configure(const rclcpp_lifecycle::State &)
   load_plugins<ActuatorPlugin>("actuator_plugins", *actuator_loader_, actuators_);
   load_plugins<BrainPlugin>("brain_plugins", *brain_loader_, brains_);
 
+  if (!required_load_ok_) {
+    RCLCPP_ERROR(
+      get_logger(),
+      "One or more REQUIRED plugins failed to load/configure; refusing to "
+      "configure (fail-closed).");
+    return CallbackReturn::FAILURE;
+  }
+
   RCLCPP_INFO(
     get_logger(), "Configured: %zu sensor, %zu actuator, %zu brain plugin(s)",
     sensors_.size(), actuators_.size(), brains_.size());
@@ -108,9 +127,30 @@ CallbackReturn CoreNode::on_activate(const rclcpp_lifecycle::State &)
   status_pub_->on_activate();
   diag_pub_->on_activate();
 
-  for (auto & p : sensors_) {p->on_activate();}
-  for (auto & p : actuators_) {p->on_activate();}
-  for (auto & p : brains_) {p->on_activate();}
+  // Honor activation results: a REQUIRED plugin that fails to activate fails the
+  // transition (fail-closed). Optional plugins only warn.
+  bool required_activate_ok = true;
+  const auto activate_all = [&](auto & plugins) {
+      for (auto & p : plugins) {
+        if (!p->on_activate()) {
+          const bool required = is_required(p->get_status().type);
+          RCLCPP_ERROR(
+            get_logger(), "Plugin '%s' failed on_activate%s",
+            p->instance_name().c_str(), required ? " (REQUIRED)" : "");
+          if (required) {required_activate_ok = false;}
+        }
+      }
+    };
+  activate_all(sensors_);
+  activate_all(actuators_);
+  activate_all(brains_);
+
+  if (!required_activate_ok) {
+    RCLCPP_ERROR(get_logger(), "A required plugin failed to activate; refusing to activate.");
+    status_pub_->on_deactivate();
+    diag_pub_->on_deactivate();
+    return CallbackReturn::FAILURE;
+  }
 
   mode_ = ModeCommand::ACTIVE;
   loop_count_ = 0;
@@ -184,8 +224,12 @@ void CoreNode::alive_loop()
 
   geometry_msgs::msg::Twist outgoing;
   if (mode_ == ModeCommand::ACTIVE) {
-    const bool cmd_fresh = have_cmd_ &&
-      (now - last_cmd_time_).seconds() <= cmd_vel_timeout_sec_;
+    // Physical watchdog on a MONOTONIC clock: a sim/wall-clock jump must never
+    // extend a stale command's validity.
+    const auto now_steady = std::chrono::steady_clock::now();
+    const double cmd_age_sec =
+      std::chrono::duration<double>(now_steady - last_cmd_steady_).count();
+    const bool cmd_fresh = have_cmd_ && (cmd_age_sec <= cmd_vel_timeout_sec_);
     if (cmd_fresh) {
       outgoing = last_cmd_;
     } else if (have_cmd_) {
@@ -195,6 +239,23 @@ void CoreNode::alive_loop()
         "cmd_vel stale (> %.3fs); holding zero motion", cmd_vel_timeout_sec_);
     }
   }  // STANDBY/SAFE hold zero motion.
+
+  // Inhibit nonzero motion if any REQUIRED actuator is faulted: we cannot trust
+  // the actuation path, so command zero to every actuator this tick.
+  bool required_actuator_fault = false;
+  for (auto & a : actuators_) {
+    if (a->state() == PluginStatus::FAULT && is_required(a->get_status().type)) {
+      required_actuator_fault = true;
+      break;
+    }
+  }
+  if (required_actuator_fault) {
+    outgoing = geometry_msgs::msg::Twist();
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 1000,
+      "required actuator in FAULT; forcing zero motion");
+  }
+
   for (auto & a : actuators_) {a->apply_command(outgoing);}
 
   const auto status = build_status();
@@ -296,6 +357,7 @@ void CoreNode::on_cmd_vel(const geometry_msgs::msg::Twist::SharedPtr msg)
 {
   last_cmd_ = *msg;
   last_cmd_time_ = this->now();
+  last_cmd_steady_ = std::chrono::steady_clock::now();
   have_cmd_ = true;
 }
 

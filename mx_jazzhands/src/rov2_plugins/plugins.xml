@@ -35,4 +35,16 @@
     base_class_type="rov2_core::SensorPlugin">
     <description>Publishes pack voltage from the shared Yahboom board as sensor_msgs/BatteryState.</description>
   </class>
+  <class
+    name="rov2_plugins::WheelEncoders"
+    type="rov2_plugins::WheelEncoders"
+    base_class_type="rov2_core::SensorPlugin">
+    <description>Raw wheel-encoder feedback (per-wheel angle + velocity) from the shared Yahboom board as sensor_msgs/JointState.</description>
+  </class>
+  <class
+    name="rov2_plugins::Odometry"
+    type="rov2_plugins::Odometry"
+    base_class_type="rov2_core::SensorPlugin">
+    <description>Calibrated wheel odometry integrated from the shared Yahboom board encoders, published as nav_msgs/Odometry.</description>
+  </class>
 </library>

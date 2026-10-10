@@ -52,17 +52,20 @@ YahboomBoard::~YahboomBoard()
 // --------------------------------------------------------------------------- //
 bool YahboomBoard::open()
 {
-  if (is_open()) {
+  std::lock_guard<std::mutex> lock(conn_mutex_);
+  if (fd_.load() >= 0) {
     return true;
   }
-  fd_ = ::open(device_.c_str(), O_RDWR | O_NOCTTY);
-  if (fd_ < 0) {
+  reset_samples();  // never serve telemetry left over from a prior connection
+  int fd = ::open(device_.c_str(), O_RDWR | O_NOCTTY);
+  if (fd < 0) {
     set_error("open(" + device_ + ") failed: " + std::strerror(errno));
     return false;
   }
+  fd_.store(fd);
   if (!configure_port()) {
-    ::close(fd_);
-    fd_ = -1;
+    ::close(fd);
+    fd_.store(-1);
     return false;
   }
 
@@ -79,13 +82,17 @@ bool YahboomBoard::open()
 
 void YahboomBoard::close()
 {
+  std::lock_guard<std::mutex> lock(conn_mutex_);
   running_ = false;
   if (reader_.joinable()) {
     reader_.join();
   }
-  if (fd_ >= 0) {
-    ::close(fd_);
-    fd_ = -1;
+  // Take the write lock so we never close the fd out from under an in-flight
+  // write; exchange to -1 so any later write sees a closed port.
+  std::lock_guard<std::mutex> wlock(write_mutex_);
+  int fd = fd_.exchange(-1);
+  if (fd >= 0) {
+    ::close(fd);
   }
 }
 
@@ -122,11 +129,12 @@ bool YahboomBoard::configure_port()
 
 // --------------------------------------------------------------------------- //
 // Transmit framing  [HEAD, DEVICE_ID, LEN, FUNC, data..., CHECKSUM]
+// Returns true only if the whole frame reached the OS write buffer.
 // --------------------------------------------------------------------------- //
-void YahboomBoard::write_frame(uint8_t func, const std::vector<uint8_t> & data)
+bool YahboomBoard::write_frame(uint8_t func, const std::vector<uint8_t> & data)
 {
-  if (fd_ < 0) {
-    return;
+  if (fd_.load() < 0) {
+    return false;
   }
   std::vector<uint8_t> cmd;
   cmd.reserve(data.size() + 5);
@@ -144,10 +152,26 @@ void YahboomBoard::write_frame(uint8_t func, const std::vector<uint8_t> & data)
   cmd.push_back(checksum);
 
   std::lock_guard<std::mutex> lock(write_mutex_);
-  ssize_t written = ::write(fd_, cmd.data(), cmd.size());
-  if (written < 0) {
-    set_error(std::string("write failed: ") + std::strerror(errno));
+  const int fd = fd_.load();  // re-check under the lock vs a concurrent close()
+  if (fd < 0) {
+    return false;
   }
+  size_t total = 0;
+  int guard = 0;
+  while (total < cmd.size()) {
+    const ssize_t written = ::write(fd, cmd.data() + total, cmd.size() - total);
+    if (written < 0) {
+      if ((errno == EINTR || errno == EAGAIN) && ++guard < 1000) {
+        continue;  // transient; retry the remaining bytes
+      }
+      set_error(std::string("write failed: ") + std::strerror(errno));
+      ++write_failures_;
+      return false;
+    }
+    guard = 0;
+    total += static_cast<size_t>(written);
+  }
+  return true;
 }
 
 void YahboomBoard::enable_auto_report(bool enable)
@@ -164,15 +188,11 @@ void YahboomBoard::request_version()
 
 bool YahboomBoard::set_motor(int s1, int s2, int s3, int s4)
 {
-  if (fd_ < 0) {
-    return false;
-  }
   auto clamp8 = [](int v) -> uint8_t {
-    v = std::max(-100, std::min(100, v));
-    return static_cast<uint8_t>(static_cast<int8_t>(v));
-  };
-  write_frame(FUNC_MOTOR, {clamp8(s1), clamp8(s2), clamp8(s3), clamp8(s4)});
-  return true;
+      v = std::max(-100, std::min(100, v));
+      return static_cast<uint8_t>(static_cast<int8_t>(v));
+    };
+  return write_frame(FUNC_MOTOR, {clamp8(s1), clamp8(s2), clamp8(s3), clamp8(s4)});
 }
 
 // --------------------------------------------------------------------------- //
@@ -190,7 +210,7 @@ void YahboomBoard::reader_loop()
 
   uint8_t buf[256];
   while (running_) {
-    ssize_t n = ::read(fd_, buf, sizeof(buf));
+    ssize_t n = ::read(fd_.load(), buf, sizeof(buf));
     if (n <= 0) {
       if (n < 0 && errno != EAGAIN && errno != EINTR) {
         set_error(std::string("read failed: ") + std::strerror(errno));
@@ -262,11 +282,14 @@ inline int32_t rd_i32(const std::vector<uint8_t> & d, size_t o)
 void YahboomBoard::parse_frame(uint8_t ext_type, const std::vector<uint8_t> & d)
 {
   std::lock_guard<std::mutex> lock(data_mutex_);
+  const auto now = SteadyClock::now();
   switch (ext_type) {
     case FUNC_REPORT_SPEED:
       if (d.size() >= 7) {
         battery_.voltage = static_cast<double>(d[6]) / 10.0;
         battery_.valid = true;
+        battery_.stamp = now;
+        battery_.seq = ++battery_seq_;
       }
       break;
     case FUNC_REPORT_MPU_RAW:
@@ -283,6 +306,8 @@ void YahboomBoard::parse_frame(uint8_t ext_type, const std::vector<uint8_t> & d)
         imu_.my = rd_i16(d, 14);
         imu_.mz = rd_i16(d, 16);
         imu_.valid = true;
+        imu_.stamp = now;
+        imu_.seq = ++imu_seq_;
       }
       break;
     case FUNC_REPORT_ICM_RAW:
@@ -298,6 +323,8 @@ void YahboomBoard::parse_frame(uint8_t ext_type, const std::vector<uint8_t> & d)
         imu_.my = rd_i16(d, 14) * ratio;
         imu_.mz = rd_i16(d, 16) * ratio;
         imu_.valid = true;
+        imu_.stamp = now;
+        imu_.seq = ++imu_seq_;
       }
       break;
     case FUNC_REPORT_ENCODER:
@@ -307,6 +334,8 @@ void YahboomBoard::parse_frame(uint8_t ext_type, const std::vector<uint8_t> & d)
         encoders_.counts[2] = rd_i32(d, 8);
         encoders_.counts[3] = rd_i32(d, 12);
         encoders_.valid = true;
+        encoders_.stamp = now;
+        encoders_.seq = ++encoder_seq_;
       }
       break;
     case FUNC_VERSION:
@@ -356,6 +385,55 @@ std::string YahboomBoard::last_error() const
 {
   std::lock_guard<std::mutex> lock(err_mutex_);
   return last_error_;
+}
+
+void YahboomBoard::reset_samples()
+{
+  std::lock_guard<std::mutex> lock(data_mutex_);
+  imu_ = ImuSample{};
+  battery_ = BatterySample{};
+  encoders_ = EncoderSample{};
+  version_ = 0.0;
+}
+
+double YahboomBoard::age_ms(const SteadyClock::time_point & stamp, bool valid) const
+{
+  if (!valid) {
+    return -1.0;  // never received
+  }
+  return std::chrono::duration<double, std::milli>(SteadyClock::now() - stamp).count();
+}
+
+bool YahboomBoard::responding() const
+{
+  const double timeout = telemetry_timeout_ms_.load();
+  std::lock_guard<std::mutex> lock(data_mutex_);
+  // A firmware-version reply is a one-shot proof the board answered us.
+  if (version_ > 0.0) {
+    return true;
+  }
+  // Otherwise require at least one telemetry stream fresher than the timeout.
+  const auto fresh = [timeout](double age) {return age >= 0.0 && age <= timeout;};
+  return fresh(age_ms(imu_.stamp, imu_.valid)) ||
+         fresh(age_ms(battery_.stamp, battery_.valid)) ||
+         fresh(age_ms(encoders_.stamp, encoders_.valid));
+}
+
+BoardHealth YahboomBoard::health() const
+{
+  BoardHealth h;
+  h.open = is_open();
+  h.write_failures = write_failures_.load();
+  h.last_error = last_error();
+  {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    h.firmware_version = version_;
+    h.imu_age_ms = age_ms(imu_.stamp, imu_.valid);
+    h.battery_age_ms = age_ms(battery_.stamp, battery_.valid);
+    h.encoder_age_ms = age_ms(encoders_.stamp, encoders_.valid);
+  }
+  h.responding = responding();  // takes data_mutex_ itself; call outside the lock
+  return h;
 }
 
 }  // namespace rov2_plugins

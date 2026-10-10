@@ -1,0 +1,10 @@
+<library path="rov2_sensors">
+  <class name="rov2_sensors::Rplidar" type="rov2_sensors::Rplidar"
+    base_class_type="rov2_core::SensorPlugin">
+    <description>RPLIDAR scans and acquisition health; no collision policy.</description>
+  </class>
+  <class name="rov2_sensors::Adxl345" type="rov2_sensors::Adxl345"
+    base_class_type="rov2_core::SensorPlugin">
+    <description>Independent ADXL345 acceleration and acquisition health; no safety policy.</description>
+  </class>
+</library>

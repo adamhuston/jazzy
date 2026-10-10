@@ -1,18 +1,33 @@
 # Hardware profile: Raspberry Pi 3 B+ deployment target.
 #
-# Real drivetrain + onboard-IMU + battery plugins on the shared Yahboom board
-# driver. The ADXL345 safety accel, LIDAR, and camera plugins land separately.
+# Real drivetrain + onboard-IMU + battery + wheel-encoder/odometry plugins on the
+# shared Yahboom board driver. The ADXL345 safety accel, LIDAR, and camera
+# plugins land separately.
+#
+# CALIBRATION STATUS: values marked PROVISIONAL below are best-guess defaults so
+# the pipeline is testable end-to-end. They are NOT bench-measured. Until they
+# are replaced with measured values (and provisional_calibration set false),
+# odometry/encoder streams report DEGRADED and must not be trusted for metric
+# decisions. See vanilla_bot/probe/robot_hardware.yaml for the measurement list.
 rov2_core:
   ros__parameters:
     loop_rate_hz: 20.0
-    cmd_vel_timeout_sec: 0.5
+    # Safety Czar policy command timeout (300 ms). A stale command -> stop.
+    cmd_vel_timeout_sec: 0.3
     autostart: true
     use_sim_time: false
-    sensor_plugins: ["rov2_plugins::NavImu", "rov2_plugins::Battery"]
+    sensor_plugins:
+      - "rov2_plugins::NavImu"
+      - "rov2_plugins::Battery"
+      - "rov2_plugins::WheelEncoders"
+      - "rov2_plugins::Odometry"
     actuator_plugins: ["rov2_plugins::Drivetrain"]
     brain_plugins: ["rov2_plugins::NoopBrain"]
+    # Fail-closed: the actuation path MUST load/configure/activate or the node
+    # refuses to come up. A faulted required actuator forces zero motion.
+    required_plugins: ["rov2_plugins::Drivetrain"]
 
-    # All three plugins share ONE Yahboom serial connection (see YahboomBoard).
+    # All plugins share ONE Yahboom serial connection (see YahboomBoard).
     drivetrain:
       device: "/dev/myserial"      # stable udev symlink -> motor board (1a86:7523)
       # Phase-1 OPEN-LOOP gains: map normalized v, omega to motor units [-100,100].
@@ -27,6 +42,11 @@ rov2_core:
       # Defaults are a best guess; confirm on the bench (slow, wheels off ground).
       left_motor_ids: [1, 3]
       right_motor_ids: [2, 4]
+      # Fail-safe gating: nonzero motion requires a responding board and fresh
+      # encoder telemetry. Set require_board:=false ONLY for hardware-free dev.
+      require_board: true
+      require_feedback: true
+      feedback_timeout_ms: 250.0
 
     nav_imu:
       device: "/dev/myserial"
@@ -36,3 +56,24 @@ rov2_core:
     battery:
       device: "/dev/myserial"
       topic: "/battery"
+
+    wheel_encoders:
+      device: "/dev/myserial"
+      topic: "/wheel_states"
+      counts_per_rev: 1320.0         # PROVISIONAL best guess (pending bench measurement)
+      max_wheel_rev_per_s: 20.0      # plausibility clamp for glitch/reset rejection
+      provisional_calibration: true  # -> DEGRADED until measured
+      joint_names: ["front_left", "front_right", "rear_left", "rear_right"]
+
+    odometry:
+      device: "/dev/myserial"
+      topic: "/odom"
+      odom_frame_id: "odom"
+      base_frame_id: "base_link"
+      counts_per_rev: 1320.0         # PROVISIONAL best guess
+      wheel_radius_m: 0.0325         # PROVISIONAL best guess (~65 mm dia wheels)
+      track_width_m: 0.167           # PROVISIONAL best guess (left-right wheel distance)
+      max_wheel_rev_per_s: 20.0
+      provisional_calibration: true  # -> DEGRADED + inflated covariance until measured
+      left_motor_ids: [1, 3]
+      right_motor_ids: [2, 4]

@@ -25,7 +25,7 @@ set -u
 cd "$WS"
 
 colcon build --symlink-install \
-  --packages-select rov2_interfaces rov2_core rov2_plugins rov2_bringup \
+  --packages-select rov2_interfaces rov2_core rov2_plugins rov2_sensors rov2_bringup \
   "$@"
 
 echo
